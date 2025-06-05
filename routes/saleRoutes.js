@@ -20,12 +20,15 @@ const Sale = mongoose.model('Sale', SaleSchema);
 // Record a sale
 router.post('/', async (req, res) => {
   try {
-    const { medicineId, medicineName, clinic, quantity, rate, soldBy, soldByName } = req.body;
+    const { medicineId, medicineName, clinic, quantity, rate, soldBy, soldByName, soldAt } = req.body;
     const medicine = await Medicine.findById(medicineId);
     if (!medicine) return res.status(404).json({ message: 'Medicine not found' });
     if (medicine.quantity < quantity) return res.status(400).json({ message: 'Not enough stock' });
+    
     medicine.quantity -= quantity;
     await medicine.save();
+    
+    // Create a sale with the provided date or current date
     const sale = new Sale({
       medicine: medicineId,
       medicineName,
@@ -35,10 +38,18 @@ router.post('/', async (req, res) => {
       total: quantity * rate,
       soldBy,
       soldByName,
+      soldAt: soldAt || new Date(), // Use provided date or current date
     });
+    
     await sale.save();
+    
+    // Log the sale with its date information
+    console.log(`Sale recorded: ${medicineName}, Date (ISO): ${sale.soldAt}`);
+    console.log(`Local date in Karachi: ${new Date(sale.soldAt).toLocaleString('en-US', { timeZone: 'Asia/Karachi' })}`);
+    
     res.status(201).json(sale);
   } catch (err) {
+    console.error("Error recording sale:", err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -101,18 +112,47 @@ router.get('/analytics', async (req, res) => {
 // Get sales for a clinic by date (YYYY-MM-DD)
 router.get('/by-date', async (req, res) => {
   try {
-    const { clinic, date } = req.query;
+    const { clinic, date, timezone = 'Asia/Karachi' } = req.query;
     if (!clinic || !date) return res.status(400).json({ message: 'Clinic and date are required' });
-    const start = new Date(date);
-    start.setHours(0,0,0,0);
-    const end = new Date(date);
-    end.setHours(23,59,59,999);
-    const sales = await Sale.find({
-      clinic,
-      soldAt: { $gte: start, $lte: end }
-    }).sort({ soldAt: -1 });
+    
+    console.log(`Fetching sales for clinic: ${clinic}, date: ${date}, timezone: ${timezone}`);
+    
+    // Use MongoDB's $expr and date operators to compare dates in the database
+    // This matches based on the local date in the specified timezone
+    const sales = await Sale.aggregate([
+      {
+        $match: {
+          clinic: clinic
+        }
+      },
+      {
+        $addFields: {
+          // Convert UTC date to the local date string in Pakistan timezone
+          localDate: { 
+            $dateToString: { 
+              date: "$soldAt", 
+              format: "%Y-%m-%d", 
+              timezone: timezone 
+            } 
+          }
+        }
+      },
+      {
+        $match: {
+          // Match the local date string with the requested date
+          localDate: date
+        }
+      },
+      {
+        $sort: { soldAt: -1 }
+      }
+    ]);
+    
+    console.log(`Found ${sales.length} sales for date ${date}`);
+    
     res.json(sales);
   } catch (err) {
+    console.error("Error in /by-date:", err);
     res.status(500).json({ message: err.message });
   }
 });
