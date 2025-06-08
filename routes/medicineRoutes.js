@@ -20,8 +20,8 @@ router.get('/', async (req, res) => {
 // Add a new medicine
 router.post('/', async (req, res) => {
   try {
-    const { name, description, quantity, price, clinic } = req.body;
-    const medicine = new Medicine({ name, description, quantity, price, clinic });
+    const { name, description, quantity, purchasePrice, clinic } = req.body;
+    const medicine = new Medicine({ name, description, quantity, purchasePrice, clinic });
     await medicine.save();
     res.status(201).json(medicine);
   } catch (err) {

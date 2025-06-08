@@ -85,25 +85,49 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// Get analytics for a clinic (top medicines, total sales, revenue, filter by date)
+// Get analytics for a clinic (top medicines, total sales, revenue, profit, filter by date)
 router.get('/analytics', async (req, res) => {
   try {
     const { clinic, from, to } = req.query;
     const filter = { clinic };
     if (from) filter.soldAt = { ...filter.soldAt, $gte: new Date(from) };
     if (to) filter.soldAt = { ...filter.soldAt, $lte: new Date(to + 'T23:59:59.999Z') };
-    const sales = await Sale.find(filter);
+    
+    // Get all sales for the given filters
+    const sales = await Sale.find(filter).populate('medicine', 'purchasePrice');
+    
     const totalSales = sales.reduce((sum, s) => sum + s.quantity, 0);
     const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
-    // Top medicines by quantity sold
+    
+    // Calculate total profit
+    let totalProfit = 0;
+      // Top medicines by quantity sold
     const medMap = {};
-    sales.forEach(s => {
-      if (!medMap[s.medicineName]) medMap[s.medicineName] = { name: s.medicineName, quantity: 0, revenue: 0 };
-      medMap[s.medicineName].quantity += s.quantity;
-      medMap[s.medicineName].revenue += s.total;
-    });
+    
+    for(const sale of sales) {
+      if (!medMap[sale.medicineName]) {
+        medMap[sale.medicineName] = { 
+          name: sale.medicineName, 
+          quantity: 0, 
+          revenue: 0, 
+          profit: 0 
+        };
+      }
+      
+      medMap[sale.medicineName].quantity += sale.quantity;
+      medMap[sale.medicineName].revenue += sale.total;
+      
+      // Calculate profit using worker-set selling price
+      if (sale.medicine && sale.medicine.purchasePrice) {
+        // Profit = (Selling Price - Purchase Price) × Quantity
+        const saleProfit = (sale.rate - sale.medicine.purchasePrice) * sale.quantity;
+        totalProfit += saleProfit;
+        medMap[sale.medicineName].profit += saleProfit;
+      }
+    }
+    
     const topMedicines = Object.values(medMap).sort((a, b) => b.quantity - a.quantity).slice(0, 10);
-    res.json({ totalSales, totalRevenue, topMedicines });
+    res.json({ totalSales, totalRevenue, totalProfit, topMedicines });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -186,17 +210,39 @@ router.get('/monthly-analytics', async (req, res) => {
     const sales = await Sale.find({
       clinic,
       soldAt: { $gte: start, $lte: end }
-    });
+    }).populate('medicine', 'purchasePrice');
+    
     const totalSales = sales.reduce((sum, s) => sum + s.quantity, 0);
     const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
+    
+    // Calculate total profit
+    let totalProfit = 0;
+    
     const medMap = {};
-    sales.forEach(s => {
-      if (!medMap[s.medicineName]) medMap[s.medicineName] = { name: s.medicineName, quantity: 0, revenue: 0 };
-      medMap[s.medicineName].quantity += s.quantity;
-      medMap[s.medicineName].revenue += s.total;
-    });
+    
+    for(const sale of sales) {
+      if (!medMap[sale.medicineName]) {
+        medMap[sale.medicineName] = { 
+          name: sale.medicineName, 
+          quantity: 0, 
+          revenue: 0,
+          profit: 0 
+        };
+      }
+        medMap[sale.medicineName].quantity += sale.quantity;
+      medMap[sale.medicineName].revenue += sale.total;
+      
+      // Calculate profit using worker-set selling price
+      if (sale.medicine && sale.medicine.purchasePrice) {
+        // Profit = (Selling Price - Purchase Price) × Quantity
+        const saleProfit = (sale.rate - sale.medicine.purchasePrice) * sale.quantity;
+        totalProfit += saleProfit;
+        medMap[sale.medicineName].profit += saleProfit;
+      }
+    }
+    
     const topMedicines = Object.values(medMap).sort((a, b) => b.quantity - a.quantity).slice(0, 10);
-    res.json({ totalSales, totalRevenue, topMedicines });
+    res.json({ totalSales, totalRevenue, totalProfit, topMedicines });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
