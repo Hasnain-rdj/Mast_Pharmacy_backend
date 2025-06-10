@@ -174,4 +174,31 @@ router.get('/transfer/history', async (req, res) => {
   }
 });
 
+// Update a transfer history record
+router.put('/transfer/history/:id', async (req, res) => {
+  try {
+    const { medicineName, quantity, fromClinic, toClinic, date } = req.body;
+    const updated = await TransferHistory.findByIdAndUpdate(
+      req.params.id,
+      { medicineName, quantity, fromClinic, toClinic, date },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Transfer record not found' });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ message: err.message || 'Failed to update transfer record' });
+  }
+});
+
+// Delete a transfer history record
+router.delete('/transfer/history/:id', async (req, res) => {
+  try {
+    const deleted = await TransferHistory.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: 'Transfer record not found' });
+    res.json({ message: 'Transfer record deleted' });
+  } catch (err) {
+    res.status(400).json({ message: err.message || 'Failed to delete transfer record' });
+  }
+});
+
 module.exports = router;
