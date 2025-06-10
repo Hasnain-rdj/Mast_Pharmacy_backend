@@ -1,6 +1,18 @@
 const express = require('express');
 const Medicine = require('../models/Medicine');
 const User = require('../models/User');
+const mongoose = require('mongoose');
+
+// TransferHistory model (define inline for simplicity)
+const transferHistorySchema = new mongoose.Schema({
+  medicineName: String,
+  quantity: Number,
+  fromClinic: String,
+  toClinic: String,
+  date: { type: Date, default: Date.now }
+});
+const TransferHistory = mongoose.models.TransferHistory || mongoose.model('TransferHistory', transferHistorySchema);
+
 const router = express.Router();
 
 // Get all medicines (optionally filter by clinic and search by name)
@@ -20,8 +32,8 @@ router.get('/', async (req, res) => {
 // Add a new medicine
 router.post('/', async (req, res) => {
   try {
-    const { name, description, quantity, purchasePrice, clinic } = req.body;
-    const medicine = new Medicine({ name, description, quantity, purchasePrice, clinic });
+    const { name, description, quantity, purchasePrice, clinic, expiryDate } = req.body;
+    const medicine = new Medicine({ name, description, quantity, purchasePrice, clinic, expiryDate });
     await medicine.save();
     res.status(201).json(medicine);
   } catch (err) {
@@ -75,6 +87,90 @@ router.get('/clinics', async (req, res) => {
     res.json(clinicsWithWorkers);
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// Atomic transfer of medicine between clinics
+router.post('/transfer', async (req, res) => {
+  /*
+    Body: {
+      fromClinic: String,
+      toClinic: String,
+      medicineId: String, // _id of medicine in fromClinic
+      medicineName: String, // for upsert in toClinic
+      quantity: Number
+    }
+  */
+  const { fromClinic, toClinic, medicineId, medicineName, quantity } = req.body;
+  // Always use only the clinic name (before any ' (') for both fromClinic and toClinic
+  const fromClinicName = fromClinic.split(' (')[0];
+  const toClinicName = toClinic.split(' (')[0];
+  if (!fromClinicName || !toClinicName || !medicineId || !medicineName || !quantity || quantity <= 0) {
+    return res.status(400).json({ message: 'Invalid transfer data' });
+  }
+  if (fromClinicName === toClinicName) {
+    return res.status(400).json({ message: 'Cannot transfer to the same clinic' });
+  }
+  const session = await Medicine.startSession();
+  session.startTransaction();
+  try {
+    // 1. Decrement from source clinic
+    const fromMed = await Medicine.findOne({ _id: medicineId, clinic: fromClinicName }).session(session);
+    if (!fromMed) throw new Error('Source medicine not found');
+    if (fromMed.quantity < quantity) throw new Error('Not enough quantity in source clinic');
+    fromMed.quantity -= quantity;
+    await fromMed.save({ session });
+
+    // 2. Increment or create in destination clinic (by name+clinic)
+    let toMed = await Medicine.findOne({ name: medicineName, clinic: toClinicName }).session(session);
+    if (toMed) {
+      toMed.quantity += quantity;
+      await toMed.save({ session });
+    } else {
+      // Copy fields from source, but set clinic and quantity
+      toMed = new Medicine({
+        name: fromMed.name,
+        description: fromMed.description,
+        quantity: quantity,
+        purchasePrice: fromMed.purchasePrice,
+        clinic: toClinicName,
+        expiryDate: fromMed.expiryDate
+      });
+      await toMed.save({ session });
+    }
+    // Save transfer record
+    await TransferHistory.create([{
+      medicineName: fromMed.name,
+      quantity,
+      fromClinic: fromClinicName,
+      toClinic: toClinicName,
+      date: new Date()
+    }], { session });
+    await session.commitTransaction();
+    session.endSession();
+    res.json({ message: 'Transfer successful' });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    res.status(400).json({ message: err.message || 'Transfer failed' });
+  }
+});
+
+// Transfer history endpoint
+router.get('/transfer/history', async (req, res) => {
+  // Query param: clinic (show all transfers where this clinic was sender or receiver)
+  const clinic = req.query.clinic ? req.query.clinic.split(' (')[0] : null;
+  if (!clinic) return res.json([]);
+  try {
+    const history = await TransferHistory.find({
+      $or: [
+        { fromClinic: clinic },
+        { toClinic: clinic }
+      ]
+    }).sort({ date: -1 });
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to fetch transfer history' });
   }
 });
 

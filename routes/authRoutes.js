@@ -10,12 +10,28 @@ if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET is not set in .env file');
 }
 
+// Endpoint to check if an admin already exists
+router.get('/admin-exists', async (req, res) => {
+  try {
+    const admin = await User.findOne({ role: 'admin' });
+    res.json({ exists: !!admin });
+  } catch (err) {
+    res.status(500).json({ exists: false });
+  }
+});
+
 // Signup route
 router.post('/signup', async (req, res) => {
   try {
     const { name, email, password, role, clinic } = req.body;
     if (!name || !email || !password || !role) {
       return res.status(400).json({ message: 'All fields are required' });
+    }
+    if (role === 'admin') {
+      const adminExists = await User.findOne({ role: 'admin' });
+      if (adminExists) {
+        return res.status(400).json({ message: 'An admin account already exists. Only one admin is allowed.' });
+      }
     }
     const existingUser = await User.findOne({ email });
     if (existingUser) {

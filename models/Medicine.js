@@ -8,6 +8,7 @@ const medicineSchema = new mongoose.Schema({
   clinic: { type: String, required: true }, // For multi-clinic support
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
+  expiryDate: { type: Date }, // Expiry date for the medicine
 });
 
 medicineSchema.pre('save', function(next) {
