@@ -6,6 +6,7 @@ require('dotenv').config();
 const authRoutes = require('./routes/authRoutes');
 const medicineRoutes = require('./routes/medicineRoutes');
 const saleRoutes = require('./routes/saleRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 app.use(cors());
@@ -15,6 +16,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/medicines', medicineRoutes);
 app.use('/api/sales', saleRoutes);
+app.use('/api/settings', settingsRoutes);
 
 mongoose.connect(process.env.MONGO_URI)
 .then(() => console.log('MongoDB connected'))
