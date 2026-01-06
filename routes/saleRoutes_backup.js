@@ -133,90 +133,19 @@ router.get('/analytics', async (req, res) => {
       if (sale.medicine && sale.medicine.purchasePrice !== null && sale.medicine.purchasePrice !== undefined) {
         purchasePrice = sale.medicine.purchasePrice;
       } else if (sale.medicineName) {
-        // Lookup from pre-fetched medicines with smart fuzzy matching
+        // Lookup from pre-fetched medicines
         const key = sale.medicineName.toLowerCase().trim();
         let matches = medicineMap[key] || [];
         
-        // If no exact match, try fuzzy matching with multiple strategies
+        // If no exact match, try fuzzy matching (remove "new", "old", extra spaces, etc.)
         if (matches.length === 0) {
-          // Utility functions
-          const normalize = (str) => str.replace(/\s+/g, ' ').trim();
-          const compact = (str) => str.replace(/\s+/g, '');
-          const removePunctuation = (str) => str.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '');
-          
-          // Calculate string similarity (0-100)
-          const similarity = (str1, str2) => {
-            const longer = str1.length > str2.length ? str1 : str2;
-            const shorter = str1.length > str2.length ? str2 : str1;
-            if (longer.length === 0) return 100;
-            const editDistance = [...shorter].reduce((prev, cur, i) => {
-              return prev + (cur !== longer[i] ? 1 : 0);
-            }, Math.abs(longer.length - shorter.length));
-            return ((longer.length - editDistance) / longer.length) * 100;
-          };
-          
-          // Generate variations of the sale name
           const baseName = key.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
-          const normalizedKey = normalize(key);
-          const compactKey = compact(key);
-          const compactBaseName = compact(baseName);
-          const noPunctKey = removePunctuation(key);
-          const compactNoPunctKey = compact(removePunctuation(key));
-          
-          // Extract words for partial matching
-          const keyWords = key.split(/\s+/).filter(w => w.length > 2);
-          
-          let bestMatch = null;
-          let bestScore = 0;
-          
           for (const [medKey, medList] of Object.entries(medicineMap)) {
             const baseKey = medKey.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
-            const normalizedMedKey = normalize(medKey);
-            const compactMedKey = compact(medKey);
-            const compactBaseKey = compact(baseKey);
-            const noPunctMedKey = removePunctuation(medKey);
-            const compactNoPunctMedKey = compact(removePunctuation(medKey));
-            const medWords = medKey.split(/\s+/).filter(w => w.length > 2);
-            
-            let score = 0;
-            
-            // Exact and near-exact matches (highest priority)
-            if (baseName === baseKey) score = 100;
-            else if (normalizedKey === normalizedMedKey) score = 95;
-            else if (compactKey === compactMedKey) score = 90;
-            else if (compactBaseName === compactBaseKey) score = 85;
-            else if (normalize(baseName) === normalize(baseKey)) score = 80;
-            else if (compactNoPunctKey === compactNoPunctMedKey) score = 75;
-            else if (noPunctKey === noPunctMedKey) score = 70;
-            
-            // String similarity for typos (e.g., Diarroban vs Diaroban)
-            if (score === 0) {
-              const sim = similarity(compactKey, compactMedKey);
-              if (sim >= 85) {
-                score = 65 + (sim - 85) * 2; // 65-95 range for high similarity
-              }
+            if (baseName === baseKey) {
+              matches = medList;
+              break;
             }
-            
-            // Partial word matching - require high ratio and multiple word matches
-            if (score === 0 && keyWords.length > 1 && medWords.length > 1) {
-              const matchedWords = keyWords.filter(word => medKey.includes(word));
-              const wordMatchRatio = matchedWords.length / keyWords.length;
-              
-              // Only accept if most words match AND we have multiple matches
-              if (wordMatchRatio >= 0.8 && matchedWords.length >= 2) {
-                score = 55 + (wordMatchRatio * 10);
-              }
-            }
-            
-            // Track best match - increased threshold to 65 to avoid weak matches
-            if (score > bestScore && score >= 65) {
-              bestScore = score;
-              bestMatch = medList;
-            }
-          }
-          
-          if (bestMatch) {
-            matches = bestMatch;
           }
         }
         
@@ -407,90 +336,19 @@ router.get('/monthly-analytics', async (req, res) => {
       if (sale.medicine && sale.medicine.purchasePrice !== null && sale.medicine.purchasePrice !== undefined) {
         purchasePrice = sale.medicine.purchasePrice;
       } else if (sale.medicineName) {
-        // Lookup from pre-fetched medicines with smart fuzzy matching
+        // Lookup from pre-fetched medicines
         const key = sale.medicineName.toLowerCase().trim();
         let matches = medicineMap[key] || [];
         
-        // If no exact match, try fuzzy matching with multiple strategies
+        // If no exact match, try fuzzy matching (remove "new", "old", extra spaces, etc.)
         if (matches.length === 0) {
-          // Utility functions
-          const normalize = (str) => str.replace(/\s+/g, ' ').trim();
-          const compact = (str) => str.replace(/\s+/g, '');
-          const removePunctuation = (str) => str.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '');
-          
-          // Calculate string similarity (0-100)
-          const similarity = (str1, str2) => {
-            const longer = str1.length > str2.length ? str1 : str2;
-            const shorter = str1.length > str2.length ? str2 : str1;
-            if (longer.length === 0) return 100;
-            const editDistance = [...shorter].reduce((prev, cur, i) => {
-              return prev + (cur !== longer[i] ? 1 : 0);
-            }, Math.abs(longer.length - shorter.length));
-            return ((longer.length - editDistance) / longer.length) * 100;
-          };
-          
-          // Generate variations of the sale name
           const baseName = key.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
-          const normalizedKey = normalize(key);
-          const compactKey = compact(key);
-          const compactBaseName = compact(baseName);
-          const noPunctKey = removePunctuation(key);
-          const compactNoPunctKey = compact(removePunctuation(key));
-          
-          // Extract words for partial matching
-          const keyWords = key.split(/\s+/).filter(w => w.length > 2);
-          
-          let bestMatch = null;
-          let bestScore = 0;
-          
           for (const [medKey, medList] of Object.entries(medicineMap)) {
             const baseKey = medKey.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
-            const normalizedMedKey = normalize(medKey);
-            const compactMedKey = compact(medKey);
-            const compactBaseKey = compact(baseKey);
-            const noPunctMedKey = removePunctuation(medKey);
-            const compactNoPunctMedKey = compact(removePunctuation(medKey));
-            const medWords = medKey.split(/\s+/).filter(w => w.length > 2);
-            
-            let score = 0;
-            
-            // Exact and near-exact matches (highest priority)
-            if (baseName === baseKey) score = 100;
-            else if (normalizedKey === normalizedMedKey) score = 95;
-            else if (compactKey === compactMedKey) score = 90;
-            else if (compactBaseName === compactBaseKey) score = 85;
-            else if (normalize(baseName) === normalize(baseKey)) score = 80;
-            else if (compactNoPunctKey === compactNoPunctMedKey) score = 75;
-            else if (noPunctKey === noPunctMedKey) score = 70;
-            
-            // String similarity for typos (e.g., Diarroban vs Diaroban)
-            if (score === 0) {
-              const sim = similarity(compactKey, compactMedKey);
-              if (sim >= 85) {
-                score = 65 + (sim - 85) * 2; // 65-95 range for high similarity
-              }
+            if (baseName === baseKey) {
+              matches = medList;
+              break;
             }
-            
-            // Partial word matching - require high ratio and multiple word matches
-            if (score === 0 && keyWords.length > 1 && medWords.length > 1) {
-              const matchedWords = keyWords.filter(word => medKey.includes(word));
-              const wordMatchRatio = matchedWords.length / keyWords.length;
-              
-              // Only accept if most words match AND we have multiple matches
-              if (wordMatchRatio >= 0.8 && matchedWords.length >= 2) {
-                score = 55 + (wordMatchRatio * 10);
-              }
-            }
-            
-            // Track best match - increased threshold to 65 to avoid weak matches
-            if (score > bestScore && score >= 65) {
-              bestScore = score;
-              bestMatch = medList;
-            }
-          }
-          
-          if (bestMatch) {
-            matches = bestMatch;
           }
         }
         
