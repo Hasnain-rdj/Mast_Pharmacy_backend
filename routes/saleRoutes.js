@@ -96,12 +96,22 @@ router.get('/analytics', async (req, res) => {
     // Get all sales for the given filters
     const sales = await Sale.find(filter).populate('medicine', 'purchasePrice');
     
+    // Fetch all medicines once for efficient lookup
+    const allMedicines = await Medicine.find({});
+    const medicineMap = {};
+    allMedicines.forEach(med => {
+      const key = `${med.name.toLowerCase().trim()}`;
+      if (!medicineMap[key]) {
+        medicineMap[key] = [];
+      }
+      medicineMap[key].push(med);
+    });
+    
     const totalSales = sales.reduce((sum, s) => sum + s.quantity, 0);
     const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
     
     // Calculate total profit
     let totalProfit = 0;
-      // Top medicines by quantity sold
     const medMap = {};
     
     for(const sale of sales) {
@@ -110,21 +120,69 @@ router.get('/analytics', async (req, res) => {
           name: sale.medicineName, 
           quantity: 0, 
           revenue: 0, 
-          profit: 0 
+          profit: 0,
+          hasPurchasePrice: false
         };
       }
       
       medMap[sale.medicineName].quantity += sale.quantity;
       medMap[sale.medicineName].revenue += sale.total;
       
-      // Calculate profit using worker-set selling price
-      if (sale.medicine && sale.medicine.purchasePrice) {
-        // Profit = (Selling Price - Purchase Price) × Quantity
-        const saleProfit = (sale.rate - sale.medicine.purchasePrice) * sale.quantity;
+      // Get purchase price from populated medicine or lookup by name
+      let purchasePrice = null;
+      if (sale.medicine && sale.medicine.purchasePrice !== null && sale.medicine.purchasePrice !== undefined) {
+        purchasePrice = sale.medicine.purchasePrice;
+      } else if (sale.medicineName) {
+        // Lookup from pre-fetched medicines
+        const key = sale.medicineName.toLowerCase().trim();
+        let matches = medicineMap[key] || [];
+        
+        // If no exact match, try fuzzy matching (remove "new", "old", extra spaces, etc.)
+        if (matches.length === 0) {
+          const baseName = key.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
+          for (const [medKey, medList] of Object.entries(medicineMap)) {
+            const baseKey = medKey.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
+            if (baseName === baseKey) {
+              matches = medList;
+              break;
+            }
+          }
+        }
+        
+        // Try exact clinic match first
+        let currentMedicine = matches.find(m => m.clinic === sale.clinic);
+        
+        // Try clinic name that starts with the sale clinic
+        if (!currentMedicine) {
+          currentMedicine = matches.find(m => m.clinic.toLowerCase().startsWith(sale.clinic.toLowerCase()));
+        }
+        
+        // Use any match with valid purchase price
+        if (!currentMedicine) {
+          currentMedicine = matches.find(m => m.purchasePrice !== null && m.purchasePrice !== undefined);
+        }
+        
+        if (currentMedicine && currentMedicine.purchasePrice !== null && currentMedicine.purchasePrice !== undefined) {
+          purchasePrice = currentMedicine.purchasePrice;
+        }
+      }
+      
+      // Calculate profit using purchase price
+      if (purchasePrice !== null && purchasePrice !== undefined) {
+        const saleProfit = (sale.rate - purchasePrice) * sale.quantity;
         totalProfit += saleProfit;
         medMap[sale.medicineName].profit += saleProfit;
+        medMap[sale.medicineName].hasPurchasePrice = true;
       }
     }
+    
+    // Convert profit to null for medicines without any purchase price data
+    Object.values(medMap).forEach(med => {
+      if (!med.hasPurchasePrice) {
+        med.profit = null;
+      }
+      delete med.hasPurchasePrice;
+    });
     
     const topMedicines = Object.values(medMap).sort((a, b) => b.quantity - a.quantity).slice(0, 10);
     res.json({ totalSales, totalRevenue, totalProfit, topMedicines });
@@ -169,6 +227,28 @@ router.get('/by-date', async (req, res) => {
       },
       {
         $sort: { soldAt: -1 }
+      },
+      {
+        // Lookup to populate medicine data
+        $lookup: {
+          from: 'medicines',
+          localField: 'medicine',
+          foreignField: '_id',
+          as: 'medicineData'
+        }
+      },
+      {
+        // Add purchasePrice field from populated medicine
+        $addFields: {
+          purchasePrice: { $arrayElemAt: ['$medicineData.purchasePrice', 0] }
+        }
+      },
+      {
+        // Remove the temporary medicineData array
+        $project: {
+          medicineData: 0,
+          localDate: 0
+        }
       }
     ]);
     
@@ -192,8 +272,15 @@ router.get('/by-month', async (req, res) => {
     const sales = await Sale.find({
       clinic,
       soldAt: { $gte: start, $lte: end }
-    }).sort({ soldAt: -1 });
-    res.json(sales);
+    }).populate('medicine', 'purchasePrice').sort({ soldAt: -1 });
+    
+    // Transform to include purchasePrice at the top level
+    const transformedSales = sales.map(sale => ({
+      ...sale.toObject(),
+      purchasePrice: sale.medicine ? sale.medicine.purchasePrice : null
+    }));
+    
+    res.json(transformedSales);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -212,12 +299,22 @@ router.get('/monthly-analytics', async (req, res) => {
       soldAt: { $gte: start, $lte: end }
     }).populate('medicine', 'purchasePrice');
     
+    // Fetch all medicines once for efficient lookup
+    const allMedicines = await Medicine.find({});
+    const medicineMap = {};
+    allMedicines.forEach(med => {
+      const key = `${med.name.toLowerCase().trim()}`;
+      if (!medicineMap[key]) {
+        medicineMap[key] = [];
+      }
+      medicineMap[key].push(med);
+    });
+    
     const totalSales = sales.reduce((sum, s) => sum + s.quantity, 0);
     const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
     
     // Calculate total profit
     let totalProfit = 0;
-    
     const medMap = {};
     
     for(const sale of sales) {
@@ -226,20 +323,69 @@ router.get('/monthly-analytics', async (req, res) => {
           name: sale.medicineName, 
           quantity: 0, 
           revenue: 0,
-          profit: 0 
+          profit: 0,
+          hasPurchasePrice: false
         };
       }
-        medMap[sale.medicineName].quantity += sale.quantity;
+      
+      medMap[sale.medicineName].quantity += sale.quantity;
       medMap[sale.medicineName].revenue += sale.total;
       
-      // Calculate profit using worker-set selling price
-      if (sale.medicine && sale.medicine.purchasePrice) {
-        // Profit = (Selling Price - Purchase Price) × Quantity
-        const saleProfit = (sale.rate - sale.medicine.purchasePrice) * sale.quantity;
+      // Get purchase price from populated medicine or lookup by name
+      let purchasePrice = null;
+      if (sale.medicine && sale.medicine.purchasePrice !== null && sale.medicine.purchasePrice !== undefined) {
+        purchasePrice = sale.medicine.purchasePrice;
+      } else if (sale.medicineName) {
+        // Lookup from pre-fetched medicines
+        const key = sale.medicineName.toLowerCase().trim();
+        let matches = medicineMap[key] || [];
+        
+        // If no exact match, try fuzzy matching (remove "new", "old", extra spaces, etc.)
+        if (matches.length === 0) {
+          const baseName = key.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
+          for (const [medKey, medList] of Object.entries(medicineMap)) {
+            const baseKey = medKey.replace(/\s+(new|old|latest|updated)\s*$/i, '').trim();
+            if (baseName === baseKey) {
+              matches = medList;
+              break;
+            }
+          }
+        }
+        
+        // Try exact clinic match first
+        let currentMedicine = matches.find(m => m.clinic === sale.clinic);
+        
+        // Try clinic name that starts with the sale clinic
+        if (!currentMedicine) {
+          currentMedicine = matches.find(m => m.clinic.toLowerCase().startsWith(sale.clinic.toLowerCase()));
+        }
+        
+        // Use any match with valid purchase price
+        if (!currentMedicine) {
+          currentMedicine = matches.find(m => m.purchasePrice !== null && m.purchasePrice !== undefined);
+        }
+        
+        if (currentMedicine && currentMedicine.purchasePrice !== null && currentMedicine.purchasePrice !== undefined) {
+          purchasePrice = currentMedicine.purchasePrice;
+        }
+      }
+      
+      // Calculate profit using purchase price
+      if (purchasePrice !== null && purchasePrice !== undefined) {
+        const saleProfit = (sale.rate - purchasePrice) * sale.quantity;
         totalProfit += saleProfit;
         medMap[sale.medicineName].profit += saleProfit;
+        medMap[sale.medicineName].hasPurchasePrice = true;
       }
     }
+    
+    // Convert profit to null for medicines without any purchase price data
+    Object.values(medMap).forEach(med => {
+      if (!med.hasPurchasePrice) {
+        med.profit = null;
+      }
+      delete med.hasPurchasePrice;
+    });
     
     const topMedicines = Object.values(medMap).sort((a, b) => b.quantity - a.quantity).slice(0, 10);
     res.json({ totalSales, totalRevenue, totalProfit, topMedicines });
